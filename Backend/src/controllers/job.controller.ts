@@ -48,8 +48,8 @@ export const createJobFromAI = async (req: Request, res: Response) => {
     try {
         const aiJobData: AIJobData = req.body;
         if (!aiJobData.jobTitle || !aiJobData.company) {
-            return res.status(400).json({ 
-                message: 'jobTitle and company are required fields' 
+            return res.status(400).json({
+                message: 'jobTitle and company are required fields'
             });
         }
 

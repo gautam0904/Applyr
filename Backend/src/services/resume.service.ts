@@ -1,441 +1,279 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 import { config } from './config.js';
-import type { AIJobData, JobStatus } from '../interface/job.interface.js';
-import BaseResume from '../model/baseResume.model.js';
-import path from "path";
-import fs from "fs";
-import { exec } from "child_process";
+import { ModelRouter, ModelRole } from '../utils/modelRouter.js';
+import { ResumeEvaluationService } from './resume.evaluation.service.js';
+import { ResumeOptimizerService } from './resume.optimizer.service.js';
+import { ResumePDFService } from './resume.pdf.service.js';
+import { CoverLetterService } from './coverLetter.service.js';
+import { GoogleDriveService } from './googleDrive.service.js';
 import { JobService } from './job.service.js';
-import puppeteer from "puppeteer";
+import { Evaluation } from '../model/evaluation.model.js';
+import BaseResume from '../model/baseResume.model.js';
 import type { IBaseResume } from '../interface/resume.interface.js';
 
 export class ResumeService {
-    private genAI: GoogleGenerativeAI;
-    private model: any;
+    private router: ModelRouter;
+    private groq: Groq;
+    private evaluator: ResumeEvaluationService;
+    private optimizer: ResumeOptimizerService;
+    private pdf: ResumePDFService;
+    private coverLetter: CoverLetterService;
+    private drive: GoogleDriveService;
     private jobService: JobService;
 
     constructor() {
-        this.genAI = new GoogleGenerativeAI(config.googleApiKey!);
-        this.model = this.genAI.getGenerativeModel({
-            model: config.model,
-            generationConfig: {
-                temperature: 0.1,
-                responseMimeType: 'application/json',
-            },
-        });
+        this.router = new ModelRouter(config.googleApiKeys);
+        this.groq = new Groq({ apiKey: config.groqApiKey });
+        this.evaluator = new ResumeEvaluationService(this.router);
+        this.optimizer = new ResumeOptimizerService(this.router, this.callGroq.bind(this));
+        this.pdf = new ResumePDFService();
+        this.coverLetter = new CoverLetterService(this.router);
+        this.drive = new GoogleDriveService();
         this.jobService = new JobService();
     }
 
-    async updateBaseResume() {
-
-    }
-
-
-
-    private async callOpenAI(prompt: string) {
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${config.openRouterApiKey}`,
-                'HTTP-Referer': 'http://localhost:3000',
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                model: config.openAIModel,
+    // ─── Groq fallback helper ────────────────────────────────────────────────
+    private async callGroq(prompt: string, wantJson: boolean): Promise<string> {
+        if (!config.groqApiKey) {
+            return this.router.callText(ModelRole.EXTRACTION, prompt, 0.2);
+        }
+        try {
+            const params: any = {
+                model: config.groqModel ?? 'llama-3.3-70b-versatile',
                 temperature: 0.1,
-                response_format: { type: "json_object" },
                 messages: [
                     {
                         role: 'system',
-                        content: 'You are an ATS resume evaluation expert. Always respond in valid JSON.',
+                        content: wantJson
+                            ? 'You are an expert resume optimizer. Always respond with valid JSON only.'
+                            : 'You are an expert resume optimizer.',
                     },
-                    {
-                        role: 'user',
-                        content: prompt,
-                    },
+                    { role: 'user', content: prompt },
                 ],
-            }),
+            };
+            if (wantJson) params.response_format = { type: 'json_object' };
+            const result = await this.groq.chat.completions.create(params);
+            return result.choices[0]?.message?.content ?? '';
+        } catch {
+            return this.router.callText(ModelRole.EXTRACTION, prompt, 0.2);
+        }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+    async getBaseResume() {
+        return BaseResume.findOne();
+    }
+
+    async updateBaseResume(updateData: Partial<IBaseResume>) {
+        const updated = await BaseResume.findOneAndUpdate(
+            {}, { $set: updateData }, { new: true }
+        );
+        if (!updated) throw new Error('Base resume not found');
+        return updated;
+    }
+
+    private injectWebPresence(resume: IBaseResume): IBaseResume {
+        const profiles = resume.basics.profiles ?? [];
+        const hasLinkedIn = profiles.some((p: any) =>
+            p.network?.toLowerCase().includes('linkedin') || p.url?.toLowerCase().includes('linkedin'));
+        const hasPortfolio = !!resume.basics.url || profiles.some((p: any) =>
+            ['portfolio', 'github', 'website'].includes((p.network ?? '').toLowerCase()));
+
+        if (!hasLinkedIn) {
+            profiles.push({ network: 'LinkedIn', username: 'your-linkedin', url: 'https://linkedin.com/in/your-linkedin' });
+            console.warn('[ResumeService] LinkedIn placeholder injected — update before sending.');
+        }
+        if (!hasPortfolio) {
+            resume.basics.url = resume.basics.url ?? 'https://your-portfolio.com';
+            console.warn('[ResumeService] Portfolio placeholder injected — update before sending.');
+        }
+        resume.basics.profiles = profiles;
+        return resume;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // API 1 — EVALUATE
+    // POST /resume/evaluate/:jobId
+    // Runs evaluation in parallel → saves to DB → returns evaluationId
+    // ═══════════════════════════════════════════════════════════════════════════
+    async evaluateResume(jobId: string): Promise<{ evaluationId: string; evaluation: any }> {
+        console.log(`\n[ResumeService] ═══ API 1: Evaluate ═══ jobId=${jobId}`);
+        const t0 = Date.now();
+
+        const [baseResume, job] = await Promise.all([
+            this.getBaseResume(),
+            this.jobService.getJobById(jobId),
+        ]);
+
+        if (!baseResume) throw new Error('Base resume not found');
+        if (!job) throw new Error('Job not found');
+
+        // Run full evaluation (all 5 sections in parallel inside)
+        const { merged, keywords } = await this.evaluator.evaluate(baseResume, job.jobDescription);
+
+        // Save to DB
+        const saved: any = await Evaluation.create({
+            jobId,
+            hard_skills_match: merged.hard_skills_match,
+            soft_skills_match: merged.soft_skills_match,
+            experience_match: merged.experience_match,
+            education_match: merged.education_match,
+            web_presence_score: merged.web_presence_score,
+            overall_score: merged.overall_score,
+            missing_keywords: merged.missing_keywords,
+            improvement_suggestions: merged.improvement_suggestions,
+            notes: merged.notes,
+            web_presence: merged.web_presence,
+            // Store raw section data for optimizer (API 2)
+            summary: merged._sections?.summary ?? {},
+            skills: merged._sections?.skills ?? {},
+            work: merged._sections?.work ?? [],
+            projects: merged._sections?.projects ?? [],
+            education: merged._sections?.education ?? {},
+            // Store keywords for optimizer (API 2)
+            // @ts-ignore — we attach keywords for optimizer convenience
+            _keywords: keywords,
         });
 
-        const data = await response.json();
-        console.log("data from deepseek -->", data);
+        console.log(`[ResumeService] Evaluation complete in ${Date.now() - t0}ms | score=${merged.overall_score} | id=${saved._id}`);
 
-        if (!response.ok || data.error) {
-            console.error('OpenRouter Error:', data);
-            throw new Error(data?.error?.message || 'AI request failed');
-        }
-
-        if (!data.choices || !data.choices.length) {
-            throw new Error('Invalid AI response format');
-        }
-
-        return JSON.parse(data.choices[0].message.content);
-    }
-
-    private async callGoogleAI(prompt: string) {
-        const model = this.genAI.getGenerativeModel({
-            model: config.model,
-            generationConfig: {
-                temperature: 0.1,
-                responseMimeType: 'application/json',
-            },
-        });
-        const response = await model.generateContent(prompt);
-        const result = response.response;
-        return result;
-    }
-
-    private parseGeminiJSON(response: any) {
-        try {
-            const text = response?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-            if (!text) {
-                throw new Error("Invalid Gemini response format");
-            }
-
-            return JSON.parse(text);
-        } catch (error) {
-            console.error("Failed to parse Gemini JSON:", error);
-            throw new Error("AI response parsing failed");
-        }
-    }
-
-    async compareResumeWithJD(jobId: string, resume: IBaseResume) {
-        const job = await this.jobService.getJobById(jobId);
-
-        if (!job) {
-            throw new Error('Job not found');
-        }
-
-        const baseResume = resume;
-
-        const prompt = `
-                        Compare the following resume and job description.
-
-                        Return JSON with:
-                        - hard_skills_match (0-100)
-                        - soft_skills_match (0-100)
-                        - experience_match (0-100)
-                        - missing_keywords (array of strings)
-                        - improvement_suggestions (array of strings)
-                        - overall_score (weighted: 50% hard, 30% soft, 20% experience)
-                        - notes (array of strings)
-
-                        Resume:
-                        ${baseResume}
-
-                        Job Description:
-                        ${job.jobDescription}`;
-
-        const aiResult = await this.callGoogleAI(prompt);
-        const aiPraised = this.parseGeminiJSON(aiResult);
         return {
-            ...aiPraised,
+            evaluationId: (saved._id).toString(),
+            evaluation: {
+                overall_score: merged.overall_score,
+                hard_skills_match: merged.hard_skills_match,
+                soft_skills_match: merged.soft_skills_match,
+                experience_match: merged.experience_match,
+                education_match: merged.education_match,
+                web_presence_score: merged.web_presence_score,
+                missing_keywords: merged.missing_keywords,
+                improvement_suggestions: merged.improvement_suggestions,
+                notes: merged.notes,
+            },
         };
     }
 
-    async getBaseResume() {
-        return await BaseResume.findOne();
-    }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // API 2 — BUILD RESUME
+    // POST /resume/build/:evaluationId
+    // Loads saved evaluation → generates tailored resume + PDF → uploads to Drive → saves resumeUrl
+    // ═══════════════════════════════════════════════════════════════════════════
+    async buildResume(evaluationId: string): Promise<{
+        resumeUrl: string;
+        tailoredResume: any;
+        evaluation: any;
+    }> {
+        console.log(`\n[ResumeService] ═══ API 2: Build Resume ═══ evaluationId=${evaluationId}`);
+        const t0 = Date.now();
 
-    async buildResumeData(id: string) {
-        const baseResume = await this.getBaseResume();
+        // Load saved evaluation
+        const evaluation = await Evaluation.findById(evaluationId);
+        if (!evaluation) throw new Error('Evaluation not found — run /evaluate first');
 
-        if (!baseResume) {
-            throw new Error('Base resume not found');
+        const [baseResume, job] = await Promise.all([
+            this.getBaseResume(),
+            this.jobService.getJobById(evaluation.jobId),
+        ]);
+
+        if (!baseResume) throw new Error('Base resume not found');
+        if (!job) throw new Error('Job not found');
+
+        // Reconstruct resume copy with web presence injected
+        const resumeCopy = this.injectWebPresence(JSON.parse(JSON.stringify(baseResume)));
+
+        // Get keywords (re-extract if not cached)
+        let keywords = (evaluation as any)._keywords;
+        if (!keywords) {
+            keywords = await this.evaluator.extractKeywords(job.jobDescription);
         }
 
-        let aiEvaluation = await this.compareResumeWithJD(id, baseResume);
+        // Build evaluation object in the format optimizer expects
+        const evalForOptimizer = {
+            missing_keywords: evaluation.missing_keywords,
+            improvement_suggestions: evaluation.improvement_suggestions,
+            missing_soft_skills: [],
+            _sections: {
+                summary: evaluation.summary,
+                skills: evaluation.skills,
+                work: evaluation.work,
+                projects: evaluation.projects,
+                education: evaluation.education,
+            },
+        };
 
-        if (!aiEvaluation) {
-            throw new Error("Invalid Gemini response format");
-        }
+        // ← Optimize ALL sections in PARALLEL
+        const tailoredResume = await this.optimizer.optimizeAll(resumeCopy, evalForOptimizer, job.jobDescription, keywords);
 
-        const job = await this.jobService.getJobById(id);
+        // Generate PDF
+        console.log('[ResumeService] Generating PDF...');
+        const pdfPath = await this.pdf.generate(tailoredResume);
 
-        if (!job) {
-            throw new Error('Job not found');
-        }
-
-        const tailoredResume = this.generateTailoredResume(
-            baseResume,
-            aiEvaluation,
-            job.jobDescription
+        // Upload to Google Drive
+        console.log('[ResumeService] Uploading to Google Drive...');
+        const resumeUrl = await this.drive.uploadFile(
+            pdfPath,
+            `Resume_${job.jobTitle}_${job.company}_${Date.now()}.pdf`,
+            'application/pdf',
         );
 
-        console.log("tailoredResume -->", tailoredResume);
+        // Save URL to job
+        await this.jobService.updateJob(evaluation.jobId, { resumeUrl });
 
-        // const pdfPath = await this.generatePDF(baseResume);
+        console.log(`[ResumeService] Resume built in ${Date.now() - t0}ms | url=${resumeUrl}`);
 
-        return aiEvaluation;
+        return { resumeUrl, tailoredResume, evaluation };
     }
 
-    private cloneResume(resume: IBaseResume): IBaseResume {
-        return JSON.parse(JSON.stringify(resume));
-    }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // API 3 — BUILD COVER LETTER
+    // POST /resume/cover-letter/:evaluationId
+    // Generates cover letter data + PDF → uploads to Drive → saves coverLetterUrl
+    // ═══════════════════════════════════════════════════════════════════════════
+    async buildCoverLetter(evaluationId: string): Promise<{
+        coverLetterUrl: string;
+        coverLetterData: any;
+    }> {
+        console.log(`\n[ResumeService] ═══ API 3: Build Cover Letter ═══ evaluationId=${evaluationId}`);
+        const t0 = Date.now();
 
-    async generateTailoredResume(
-        baseResume: IBaseResume,
-        aiEvaluation: any,
-        jobDescription: string
-    ) {
+        // Load saved evaluation
+        const evaluation = await Evaluation.findById(evaluationId);
+        if (!evaluation) throw new Error('Evaluation not found — run /evaluate first');
 
-        const prompt = `
-You are an expert ATS resume optimizer.
+        const [baseResume, job] = await Promise.all([
+            this.getBaseResume(),
+            this.jobService.getJobById(evaluation.jobId),
+        ]);
 
-INPUTS:
-1) Base Resume (JSON)
-2) Job Description (TEXT)
-3) Resume Evaluation (JSON)
+        if (!baseResume) throw new Error('Base resume not found');
+        if (!job) throw new Error('Job not found');
 
-TASK:
-Generate a fully tailored resume in EXACT SAME JSON structure as Base Resume.
+        // Build cover letter data + PDF simultaneously feasible since data must come first
+        const coverLetterData = await this.coverLetter.generateData(
+            baseResume,
+            job.jobDescription,
+            job.jobTitle,
+            job.company,
+            evaluation,
+        );
 
-RULES:
-- Do NOT invent fake companies or fake experience.
-- Do NOT increase years of experience.
-- You may rephrase bullet points.
-- You may reorder skills.
-- You may emphasize relevant technologies.
-- Adapt tone based on job level.
-- Remove irrelevant skills if needed.
-- Optimize for ATS keyword alignment.
-- Make summary highly role-specific.
-- Quantify achievements if possible.
-- Keep everything truthful.
+        // Generate PDF
+        console.log('[ResumeService] Generating cover letter PDF...');
+        const pdfPath = await this.coverLetter.generatePDF(coverLetterData);
 
-Return STRICT JSON only. No explanation.
+        // Upload to Google Drive
+        console.log('[ResumeService] Uploading cover letter to Google Drive...');
+        const coverLetterUrl = await this.drive.uploadFile(
+            pdfPath,
+            `CoverLetter_${job.jobTitle}_${job.company}_${Date.now()}.pdf`,
+            'application/pdf',
+        );
 
-Base Resume:
-${JSON.stringify(baseResume, null, 2)}
+        // Save URL to job
+        await this.jobService.updateJob(evaluation.jobId, { coverLetterUrl });
 
-Resume Evaluation:
-${JSON.stringify(aiEvaluation, null, 2)}
+        console.log(`[ResumeService] Cover letter built in ${Date.now() - t0}ms | url=${coverLetterUrl}`);
 
-Job Description:
-${jobDescription}
-`;
-
-        const aiRaw = await this.callGoogleAI(prompt);
-        return this.parseGeminiJSON(aiRaw);
-    }
-
-    private async generatePDF(resumeJSON: any): Promise<string> {
-        const outputPath = path.join(process.cwd(), "output.pdf");
-
-        const htmlContent = this.buildResumeHTML(resumeJSON);
-
-        const browser = await puppeteer.launch({
-            args: ["--no-sandbox", "--disable-setuid-sandbox"], // REQUIRED for Render
-        });
-
-        const page = await browser.newPage();
-        await page.setContent(htmlContent, { waitUntil: "networkidle0" });
-
-        await page.pdf({
-            path: outputPath,
-            format: "A4",
-            printBackground: true,
-        });
-
-        await browser.close();
-
-        return outputPath;
-    }
-
-    private buildResumeHTML(resume: any): string {
-
-        const r = this.mapResumeForPDF(resume);
-
-        const formatDate = (date: string) => {
-            if (!date) return "";
-            if (date === "present") return "Present";
-            return new Date(date).toLocaleDateString("en-US", {
-                year: "numeric",
-                month: "short"
-            });
-        };
-
-        return `
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8" />
-<style>
-    @page {
-        margin: 40px;
-    }
-    body {
-        -webkit-print-color-adjust: exact;
-        font-family: Arial, Helvetica, sans-serif;
-        margin: 40px;
-        color: #111;
-        line-height: 1.5;
-        font-size: 12px;
-    }
-
-    h1 {
-        font-size: 24px;
-        margin-bottom: 4px;
-    }
-
-    .subheading {
-        font-size: 14px;
-        margin-bottom: 8px;
-    }
-
-    .contact {
-        margin-bottom: 15px;
-        font-size: 12px;
-    }
-
-    .section {
-        margin-top: 20px;
-    }
-
-    .section-title {
-        font-size: 14px;
-        font-weight: bold;
-        border-bottom: 1px solid #000;
-        padding-bottom: 4px;
-        margin-bottom: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    .job {
-        margin-bottom: 12px;
-    }
-
-    .job-header {
-        display: flex;
-        justify-content: space-between;
-        font-weight: bold;
-    }
-
-    ul {
-        margin: 4px 0 8px 18px;
-        padding: 0;
-    }
-
-    li {
-        margin-bottom: 4px;
-    }
-
-    .skills-category {
-        margin-bottom: 6px;
-    }
-</style>
-</head>
-<body>
-
-    <h1>${r.name}</h1>
-    <div class="subheading">${r.label}</div>
-    <div class="contact">
-        ${r.email} ${r.phone ? "| " + r.phone : ""}
-    </div>
-
-    ${r.summary ? `
-    <div class="section">
-        <div class="section-title">Professional Summary</div>
-        <div>${r.summary}</div>
-    </div>
-    ` : ""}
-
-    ${r.work?.length ? `
-    <div class="section">
-        <div class="section-title">Professional Experience</div>
-
-        ${r.work.map((job: any) => `
-            <div class="job">
-                <div class="job-header">
-                    <span>${job.position} – ${job.name}</span>
-                    <span>${formatDate(job.startDate)} - ${formatDate(job.endDate)}</span>
-                </div>
-                ${job.summary ? `<div>${job.summary}</div>` : ""}
-                ${job.highlights?.length ? `
-                    <ul>
-                        ${job.highlights.map((h: string) => `<li>${h}</li>`).join("")}
-                    </ul>
-                ` : ""}
-            </div>
-        `).join("")}
-    </div>
-    ` : ""}
-
-    ${r.projects?.length ? `
-    <div class="section">
-        <div class="section-title">Projects</div>
-
-        ${r.projects.map((proj: any) => `
-            <div class="job">
-                <div class="job-header">
-                    <span>${proj.name}</span>
-                    <span>${formatDate(proj.startDate)}</span>
-                </div>
-                <div>${proj.description}</div>
-            </div>
-        `).join("")}
-    </div>
-    ` : ""}
-
-    ${r.skills?.length ? `
-    <div class="section">
-        <div class="section-title">Technical Skills</div>
-
-        ${r.skills.map((skill: any) => `
-            <div class="skills-category">
-                <strong>${skill.name}:</strong> ${skill.keywords?.join(", ")}
-            </div>
-        `).join("")}
-    </div>
-    ` : ""}
-
-    ${r.education?.length ? `
-    <div class="section">
-        <div class="section-title">Education</div>
-
-        ${r.education.map((edu: any) => `
-            <div class="job">
-                <div class="job-header">
-                    <span>${edu.studyType} – ${edu.area}</span>
-                    <span>${edu.gpa ? "GPA: " + edu.gpa : ""}</span>
-                </div>
-            </div>
-        `).join("")}
-    </div>
-    ` : ""}
-
-    ${r.certificates?.length ? `
-    <div class="section">
-        <div class="section-title">Certifications</div>
-        <ul>
-            ${r.certificates.map((c: any) => `
-                <li>${c.name} – ${c.issuer}</li>
-            `).join("")}
-        </ul>
-    </div>
-    ` : ""}
-
-</body>
-</html>
-`;
-    }
-
-    private mapResumeForPDF(resume: any) {
-        return {
-            name: resume.basics?.name || "",
-            label: resume.basics?.label || "",
-            email: resume.basics?.email || "",
-            phone: resume.basics?.phone || "",
-            summary: resume.basics?.summary || "",
-
-            work: resume.work || [],
-            education: resume.education || [],
-            skills: resume.skills || [],
-            projects: resume.projects || [],
-            awards: resume.awards || [],
-            certificates: resume.certificates || [],
-        };
+        return { coverLetterUrl, coverLetterData };
     }
 }

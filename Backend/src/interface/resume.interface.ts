@@ -13,14 +13,15 @@ interface Location {
 }
 
 interface Basics {
-    name: String,
-    label: String,
-    email: String,
-    phone: String,
-    summary: String,
+    name: string,
+    label: string,
+    email: string,
+    phone: string,
+    url: string,
+    summary: string,
     location: Location,
     profiles: Profile[],
-    totalExperience: String,
+    totalExperience: string,
 }
 
 interface Work {

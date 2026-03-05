@@ -90,18 +90,92 @@ export async function extractFromUrl(req: Request, res: Response): Promise<void>
     }
 }
 
-export async function buildResumeData(req: Request, res: Response): Promise<void> {
+export async function updateBaseResume(req: Request, res: Response) {
     try {
-        const { id } = req.body;
-        if (!id || typeof id !== 'string') {
-            res.status(400).json({ error: 'Missing ID' });
-            return;
-        }
-
-        const resumeData = await resumeService.buildResumeData(id);
-        res.json(resumeData);
-    } catch (error) {
+        const updatedResume = await resumeService.updateBaseResume(req.body);
+        res.json({
+            success: true,
+            data: updatedResume
+        });
+    } catch (error: any) {
         console.error('Controller error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json({ error: error.message });
+    }
+}
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /resume/evaluate/:jobId
+//
+// Step 1: Evaluate base resume vs job description.
+// Saves evaluation to DB. Returns evaluationId.
+//
+// Response: { evaluationId, evaluation: { overall_score, ... } }
+// ─────────────────────────────────────────────────────────────────────────────
+export async function evaluateResume(req: Request, res: Response) {
+    try {
+        const { jobId } = req.body;
+        if (!jobId) return res.status(400).json({ error: 'jobId is required' });
+
+        const result = await resumeService.evaluateResume(jobId as string);
+        return res.status(200).json(result);
+    } catch (err: any) {
+        console.error('[ResumeController] evaluateResume error:', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /resume/build/:evaluationId
+//
+// Step 2: Using saved evaluation, generate tailored resume + PDF.
+// Uploads PDF to Google Drive. Saves resumeUrl to job.
+//
+// Response: { resumeUrl, tailoredResume, evaluation }
+// ─────────────────────────────────────────────────────────────────────────────
+export async function buildResume(req: Request, res: Response) {
+    try {
+        const { evaluationId } = req.params;
+        if (!evaluationId) return res.status(400).json({ error: 'evaluationId is required' });
+
+        const result = await resumeService.buildResume(evaluationId as string);
+        return res.status(200).json(result);
+    } catch (err: any) {
+        console.error('[ResumeController] buildResume error:', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /resume/cover-letter/:evaluationId
+//
+// Step 3: Using saved evaluation, generate cover letter + PDF.
+// Uploads PDF to Google Drive. Saves coverLetterUrl to job.
+//
+// Response: { coverLetterUrl, coverLetterData }
+// ─────────────────────────────────────────────────────────────────────────────
+export async function buildCoverLetter(req: Request, res: Response) {
+    try {
+        const { evaluationId } = req.params;
+        if (!evaluationId) return res.status(400).json({ error: 'evaluationId is required' });
+
+        const result = await resumeService.buildCoverLetter(evaluationId as string);
+        return res.status(200).json(result);
+    } catch (err: any) {
+        console.error('[ResumeController] buildCoverLetter error:', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+}
+
+// ─── Existing endpoints (unchanged) ─────────────────────────────────────────
+
+export async function getBaseResume(_req: Request, res: Response) {
+    try {
+        const resume = await resumeService.getBaseResume();
+        if (!resume) return res.status(404).json({ error: 'Base resume not found' });
+        return res.status(200).json(resume);
+    } catch (err: any) {
+        return res.status(500).json({ error: err.message });
     }
 }
