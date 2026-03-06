@@ -378,16 +378,22 @@ ${awardsHTML ? `
             options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
         }
 
-        const browser = await puppeteer.launch(options);
-        const page = await browser.newPage();
-        await page.setContent(this.buildHTML(resumeJSON), { waitUntil: 'networkidle0' });
-        await page.pdf({
-            path: outputPath,
-            format: 'A4',
-            printBackground: true,
-            margin: { top: '0.45in', right: '0.55in', bottom: '0.45in', left: '0.55in' },
-        });
-        await browser.close();
+        console.log(`[Puppeteer] Launching with options:`, JSON.stringify(options));
+        try {
+            const browser = await puppeteer.launch(options);
+            const page = await browser.newPage();
+            await page.setContent(this.buildHTML(resumeJSON), { waitUntil: 'networkidle0' });
+            await page.pdf({
+                path: outputPath,
+                format: 'A4',
+                printBackground: true,
+                margin: { top: '0.45in', right: '0.55in', bottom: '0.45in', left: '0.55in' },
+            });
+            await browser.close();
+        } catch (error: any) {
+            console.error(`[Puppeteer] Execution failed: ${error.message}`);
+            throw error;
+        }
         return outputPath;
     }
 }
