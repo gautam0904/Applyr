@@ -97,7 +97,6 @@ Return ONLY valid JSON with this structure:
 
         console.log(`[Puppeteer-CoverLetter] Launching with options:`, JSON.stringify(options));
         console.log(`[Puppeteer-CoverLetter] CWD:`, process.cwd());
-        console.log(`[Puppeteer-CoverLetter] __dirname:`, __dirname);
 
         try {
             const browser = await puppeteer.launch(options);
