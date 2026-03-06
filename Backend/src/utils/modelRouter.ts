@@ -21,48 +21,54 @@ interface KeySlot {
 type ErrorKind = 'DAILY' | 'MINUTE' | 'TRANSIENT' | 'FATAL';
 
 const MODELS: Record<string, ModelDef> = {
-    'gemini-2.0-flash': { id: 'gemini-2.0-flash', isGemma: false },
+    'gemini-2.5-flash': { id: 'gemini-2.5-flash', isGemma: false },
+    'gemini-2.5-flash-lite': { id: 'gemini-2.5-flash-lite', isGemma: false },
+        'gemini-2.0-flash': { id: 'gemini-2.0-flash', isGemma: false },
     'gemini-1.5-flash': { id: 'gemini-1.5-flash', isGemma: false },
     'gemini-1.5-flash-8b': { id: 'gemini-1.5-flash-8b', isGemma: false },
     'gemma-3-27b-it': { id: 'gemma-3-27b-it', isGemma: true },
     'gemma-3-12b-it': { id: 'gemma-3-12b-it', isGemma: true },
     'gemma-3-4b-it': { id: 'gemma-3-4b-it', isGemma: true },
+    'gemma-3-1b-it': { id: 'gemma-3-1b-it', isGemma: true },
 };
 
 // ─── Role → Model Chains (best → fallback) ────────────────────────────────────
 // Each role has 6 models — exhausts ALL options before failing
 const CHAINS: Record<ModelRole, string[]> = {
     [ModelRole.EXTRACTION]: [
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
         'gemini-2.0-flash',
         'gemini-1.5-flash',
+        'gemini-1.5-flash-8b',
         'gemma-3-27b-it',
         'gemma-3-12b-it',
-        'gemini-1.5-flash-8b',
         'gemma-3-4b-it',
+        'gemma-3-1b-it',
     ],
     [ModelRole.COMPARISON]: [
         'gemma-3-27b-it',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
         'gemma-3-12b-it',
-        'gemini-1.5-flash-8b',
         'gemma-3-4b-it',
+        'gemma-3-1b-it',
     ],
     [ModelRole.VALIDATION]: [
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
+        'gemini-2.5-flash',
         'gemma-3-27b-it',
+        'gemini-2.5-flash-lite',
         'gemma-3-12b-it',
-        'gemini-1.5-flash-8b',
         'gemma-3-4b-it',
+        'gemma-3-1b-it',
     ],
     [ModelRole.ENRICHMENT]: [
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
+        'gemini-2.5-flash',
         'gemma-3-27b-it',
+        'gemini-2.5-flash-lite',
         'gemma-3-12b-it',
-        'gemini-1.5-flash-8b',
         'gemma-3-4b-it',
+        'gemma-3-1b-it',
     ],
 };
 

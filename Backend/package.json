@@ -32,5 +32,8 @@
     "groq-sdk": "^0.37.0",
     "mongoose": "^9.2.2",
     "puppeteer": "^24.37.5"
+  },
+  "puppeteer": {
+    "cacheDirectory": ".puppeteer-cache"
   }
 }
