@@ -141,4 +141,10 @@ dist
 # SvelteKit build / generate output
 .svelte-kit
 
+# Puppeteer cache
+.puppeteer-cache
+
+# Node modules
+node_modules
+
 # End of https://www.toptal.com/developers/gitignore/api/node
