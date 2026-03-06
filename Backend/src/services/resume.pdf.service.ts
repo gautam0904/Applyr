@@ -82,41 +82,6 @@ export class ResumePDFService {
         return [];
     }
 
-    adjustExperienceDates(work: any[], requiredYears?: number): any[] {
-        if (!requiredYears || !work?.length) return work;
-
-        const now = new Date();
-        let earliestStart = now;
-        let totalMonths = 0;
-
-        for (const job of work) {
-            const start = job.startDate ? new Date(job.startDate) : null;
-            const end = (job.endDate && job.endDate.toLowerCase() !== 'present')
-                ? new Date(job.endDate)
-                : now;
-            if (start) {
-                totalMonths += (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 30);
-                if (start < earliestStart) earliestStart = start;
-            }
-        }
-
-        const currentYears = totalMonths / 12;
-        if (currentYears >= requiredYears) return work;
-
-        const gapYears = requiredYears - currentYears;
-        const gapMs = gapYears * 365.25 * 24 * 60 * 60 * 1000;
-
-        return work.map(job => {
-            const start = job.startDate ? new Date(job.startDate) : null;
-            if (!start || start.getTime() !== earliestStart.getTime()) return job;
-
-            const newStart = new Date(start.getTime() - gapMs);
-            return {
-                ...job,
-                startDate: newStart.toISOString().split('T')[0],
-            };
-        });
-    }
 
     private mapData(resume: any) {
         const basics = resume.basics ?? {};
@@ -378,13 +343,7 @@ ${awardsHTML ? `
 </html>`;
     }
 
-    async generate(resumeJSON: any, requiredYearsExperience?: number): Promise<string> {
-        if (requiredYearsExperience && resumeJSON.work) {
-            resumeJSON = {
-                ...resumeJSON,
-                work: this.adjustExperienceDates(resumeJSON.work, requiredYearsExperience),
-            };
-        }
+    async generate(resumeJSON: any): Promise<string> {
 
         const outputPath = path.join(process.cwd(), `output_${Date.now()}.pdf`);
         const options: any = {

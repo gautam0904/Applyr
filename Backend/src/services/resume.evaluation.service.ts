@@ -12,12 +12,14 @@ Return ONLY valid JSON — no markdown, no explanation:
   "tech_stack": ["string"],
   "soft_skills": ["string"],
   "role_seniority": "string",
+  "required_experience_years": number,
   "environment": ["string"],
   "industry": "string",
   "required_education": ["string"],
   "preferred_education": ["string"],
   "key_action_verbs": ["string"]
 }
+IMPORTANT: "required_experience_years" must be a number (e.g. "5+ years" → 6, "3-5 years" → 5, 
 Job Description: ${jd}`);
     }
 

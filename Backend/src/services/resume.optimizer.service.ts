@@ -156,20 +156,138 @@ Job Description: ${jd}
 Return JSON array only.`, 'Awards', true);
     }
 
+    private computeCurrentYears(work: any[]): number {
+        if (!work?.length) return 0;
+        const now = new Date();
+        let totalMs = 0;
+        for (const job of work) {
+            const start = job.startDate ? new Date(job.startDate) : null;
+            if (!start) continue;
+            const end = (job.endDate && job.endDate.toLowerCase() !== 'present')
+                ? new Date(job.endDate) : now;
+            totalMs += Math.max(0, end.getTime() - start.getTime());
+        }
+        return totalMs / (1000 * 60 * 60 * 24 * 365.25);
+    }
+
+    async restructureTimeline(
+        work: any[],
+        projects: any[],
+        requiredYears: number,
+        keywords: any,
+        jd: string,
+    ): Promise<{ work: any[]; projects: any[] }> {
+        const currentYears = this.computeCurrentYears(work);
+        const techStack = toArr(keywords.tech_stack).slice(0, 10).join(', ');
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1;
+
+        let detailLevel: string;
+        if (requiredYears <= 3) {
+            detailLevel = 'This is a JUNIOR role. Include MORE project details, responsibilities, and technical depth. 6-8 bullets per role. Add extra project entries if needed to fill the page.';
+        } else if (requiredYears <= 6) {
+            detailLevel = 'This is a MID-LEVEL role. Balance between technical detail and achievements. 5-7 bullets per role.';
+        } else {
+            detailLevel = 'This is a SENIOR role (8+ years). Keep content concise but highlight impactful achievements, leadership contributions, and architecture decisions. 4-6 bullets per role. Show progression.';
+        }
+
+        const prompt = `
+You are an expert resume engineer. Restructure the work experience and projects to match EXACTLY ${requiredYears} years of total experience.
+
+CURRENT STATE:
+- Current total experience: ${currentYears.toFixed(1)} years
+- Required experience: ${requiredYears} years
+- Current date: ${currentYear}-${String(currentMonth).padStart(2, '0')}
+- JD Tech Stack: ${techStack}
+
+EXISTING WORK ENTRIES:
+${JSON.stringify(work, null, 2)}
+
+EXISTING PROJECTS:
+${JSON.stringify(projects, null, 2)}
+
+CRITICAL RULES:
+1. ALL work entries MUST use company name "Navin Infotech" — no exceptions.
+2. The timeline must cover EXACTLY ${requiredYears} years backward from ${currentYear}-${String(currentMonth).padStart(2, '0')} (present).
+3. The most recent role MUST have endDate = "Present".
+4. Split the timeline into 2-3 natural role progressions (e.g. Junior → Mid → Senior).
+   - Example for 5 years: "2021-03 to 2023-06" and "2023-06 to Present"
+   - Example for 8 years: "2018-01 to 2020-06", "2020-06 to 2023-01", "2023-01 to Present"
+5. NO GAPS between roles — each role's startDate must equal the previous role's endDate.
+6. Dates must be in YYYY-MM-DD format.
+7. Position titles should show progression (e.g. Software Engineer → Senior Software Engineer → Lead Engineer).
+8. ${detailLevel}
+9. Every bullet in highlights MUST:
+   - Start with a UNIQUE strong action verb
+   - Contain at least one metric or number
+   - Align with the JD technologies: ${techStack}
+10. Projects should align with JD tech stack. Keep ${Math.min(projects.length, requiredYears <= 3 ? 3 : 2)} projects maximum.
+11. Project highlights must be plain string arrays like ["Did X by Y%"], NOT objects.
+12. Use content from the original entries as inspiration — do NOT invent unrelated technologies.
+13. First page of resume must appear FULL and complete — no sparse sections.
+
+JOB DESCRIPTION:
+${jd.slice(0, 2000)}
+
+Return ONLY valid JSON:
+{
+  "work": [{ "company": "Navin Infotech", "position": "string", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD or Present", "location": "string", "highlights": ["string"] }],
+  "projects": [{ "name": "string", "description": "string", "highlights": ["string"], "url": "string" }]
+}`;
+
+        console.log(`[OptimizerService] Restructuring timeline: ${currentYears.toFixed(1)}yr → ${requiredYears}yr`);
+
+        try {
+            const result = await this.run(
+                JSON.stringify({ work, projects }),
+                prompt,
+                'Timeline Restructuring',
+                true,
+            );
+
+            const newWork = Array.isArray(result.work) ? result.work : work;
+            const newProjects = Array.isArray(result.projects) ? result.projects : projects;
+
+            for (const entry of newWork) {
+                entry.company = 'Navin Infotech';
+                if (!Array.isArray(entry.highlights)) entry.highlights = [];
+                entry.highlights = entry.highlights.map((h: any) =>
+                    typeof h === 'string' ? h : (h?.text ?? h?.description ?? String(h))
+                );
+            }
+
+            for (const proj of newProjects) {
+                if (!Array.isArray(proj.highlights)) proj.highlights = [];
+                proj.highlights = proj.highlights.map((h: any) =>
+                    typeof h === 'string' ? h : (h?.text ?? h?.description ?? String(h))
+                );
+            }
+
+            return { work: newWork, projects: newProjects };
+        } catch (err: any) {
+            console.error(`[OptimizerService] Timeline restructure failed: ${err.message} — using originals`);
+            return { work, projects };
+        }
+    }
+
     async optimizeAll(resume: any, evaluation: any, jd: string, keywords: any): Promise<any> {
-        console.log('[OptimizerService] Starting parallel optimization of all sections...');
+        console.log('[OptimizerService] Starting optimization pipeline...');
         const t0 = Date.now();
 
+        const requiredYears = Number(keywords.required_experience_years) || 3;
+        const { work: restructuredWork, projects: restructuredProjects } =
+            await this.restructureTimeline(resume.work, resume.projects, requiredYears, keywords, jd);
         const summaryEval = evaluation._sections?.summary ?? evaluation;
         const skillsEval = evaluation._sections?.skills ?? evaluation;
         const workEval = evaluation._sections?.work ?? [];
         const projectsEval = evaluation._sections?.projects ?? [];
 
-        const workPromises = resume.work.map((entry: any, i: number) => {
+        const workPromises = restructuredWork.map((entry: any, i: number) => {
             const evalNote = toArr(workEval[i]?.improvement_suggestions).join('; ');
             return this.optimizeWorkEntry(entry, evalNote, jd, keywords);
         });
-        const projectPromises = resume.projects.map((proj: any, i: number) => {
+        const projectPromises = restructuredProjects.map((proj: any, i: number) => {
             const evalNote = toArr(projectsEval[i]?.improvement_suggestions).join('; ');
             return this.optimizeProjectEntry(proj, evalNote, jd, keywords);
         });
