@@ -47,7 +47,7 @@ export interface JDModalData {
       <!-- Body -->
       <div class="jd-modal-body">
         <!-- Tech Stack Pills -->
-        <div class="tech-stack-section" *ngIf="data.job.techStack?.length">
+        <div class="tech-stack-section" *ngIf="data.job.techStack.length">
           <div class="section-label"><i class="bi bi-code-square"></i> Tech Stack</div>
           <div class="tech-pills">
             <span class="tech-pill" *ngFor="let t of data.job.techStack">{{ t }}</span>
