@@ -30,8 +30,8 @@ import { ThemeService } from '../../core/services/theme.service';
               <i class="bi" [class.bi-moon-stars-fill]="themeService.theme() === 'light'" [class.bi-sun-fill]="themeService.theme() === 'dark'"></i>
             </button>
             <div class="user-profile-mini d-none d-sm-flex align-items-center gap-2 ms-2">
-                <div class="avatar-header">JD</div>
-                <span class="small fw-bold text-dark">John Doe</span>
+                <div class="avatar-header">GM</div>
+                <span class="small fw-bold text-dark">Gautam Malaviya</span>
             </div>
           </div>
         </div>

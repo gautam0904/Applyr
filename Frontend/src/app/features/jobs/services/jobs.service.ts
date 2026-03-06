@@ -2,11 +2,12 @@ import { Injectable, signal, computed, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { lastValueFrom } from 'rxjs';
 import { JobApplication, JobStatus, UpdateJobPayload } from '../models/job.model';
+import { environment } from '../../../../environments/environment';
 
 @Injectable({ providedIn: 'root' })
 export class JobsService {
     private readonly http = inject(HttpClient);
-    private readonly apiUrl = 'http://localhost:3000/api/jobs';
+    private readonly apiUrl = `${environment.apiUrl}/jobs`;
 
     private readonly _jobs = signal<JobApplication[]>([]);
     readonly jobs = this._jobs.asReadonly();
