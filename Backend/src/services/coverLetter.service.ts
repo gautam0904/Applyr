@@ -1,6 +1,32 @@
 import puppeteer from 'puppeteer';
 import path from 'path';
+import fs from 'fs';
 import { ModelRouter, ModelRole } from '../utils/modelRouter.js';
+
+// ── Auto-detect Chrome installed by `npx puppeteer browsers install chrome` ──
+function findLocalChrome(): string | undefined {
+    const searchDirs = [
+        path.join(process.cwd(), '.cache', 'puppeteer'),
+        path.join(process.cwd(), '.puppeteer-cache'),
+        '/opt/render/.cache/puppeteer',
+    ];
+    for (const dir of searchDirs) {
+        if (!fs.existsSync(dir)) continue;
+        try {
+            const chromeDir = path.join(dir, 'chrome');
+            if (!fs.existsSync(chromeDir)) continue;
+            const versions = fs.readdirSync(chromeDir);
+            for (const ver of versions) {
+                const candidate = path.join(chromeDir, ver, 'chrome-linux64', 'chrome');
+                if (fs.existsSync(candidate)) {
+                    console.log(`[Puppeteer-CoverLetter] Found Chrome at: ${candidate}`);
+                    return candidate;
+                }
+            }
+        } catch { /* ignore */ }
+    }
+    return undefined;
+}
 
 export class CoverLetterService {
     constructor(private router: ModelRouter) { }
@@ -93,6 +119,11 @@ Return ONLY valid JSON with this structure:
 
         if (process.env.PUPPETEER_EXECUTABLE_PATH) {
             options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        } else {
+            const localChrome = findLocalChrome();
+            if (localChrome) {
+                options.executablePath = localChrome;
+            }
         }
 
         console.log(`[Puppeteer-CoverLetter] Launching with options:`, JSON.stringify(options));

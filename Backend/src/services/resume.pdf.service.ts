@@ -1,5 +1,31 @@
 import puppeteer from 'puppeteer';
 import path from 'path';
+import fs from 'fs';
+
+function findLocalChrome(): string | undefined {
+    const searchDirs = [
+        path.join(process.cwd(), '.cache', 'puppeteer'),
+        path.join(process.cwd(), '.puppeteer-cache'),
+        '/opt/render/.cache/puppeteer',
+    ];
+
+    for (const dir of searchDirs) {
+        if (!fs.existsSync(dir)) continue;
+        try {
+            const chromeDir = path.join(dir, 'chrome');
+            if (!fs.existsSync(chromeDir)) continue;
+            const versions = fs.readdirSync(chromeDir);
+            for (const ver of versions) {
+                const candidate = path.join(chromeDir, ver, 'chrome-linux64', 'chrome');
+                if (fs.existsSync(candidate)) {
+                    console.log(`[Puppeteer] Found Chrome at: ${candidate}`);
+                    return candidate;
+                }
+            }
+        } catch { }
+    }
+    return undefined;
+}
 
 export class ResumePDFService {
 
@@ -376,6 +402,11 @@ ${awardsHTML ? `
 
         if (process.env.PUPPETEER_EXECUTABLE_PATH) {
             options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        } else {
+            const localChrome = findLocalChrome();
+            if (localChrome) {
+                options.executablePath = localChrome;
+            }
         }
 
         console.log(`[Puppeteer] Launching with options:`, JSON.stringify(options));
