@@ -18,8 +18,7 @@ import { ConfirmDialogComponent } from '../../../../shared/components/confirm-di
     imports: [
         CommonModule,
         JobTableComponent,
-        MatDialogModule,
-        ConfirmDialogComponent
+        MatDialogModule
     ],
     templateUrl: './jobs-page.component.html',
     styleUrl: './jobs-page.component.scss',

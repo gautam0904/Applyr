@@ -64,7 +64,7 @@ export class ResumeService {
 
     async updateBaseResume(updateData: Partial<IBaseResume>) {
         const updated = await BaseResume.findOneAndUpdate(
-            {}, { $set: updateData }, { new: true }
+            {}, { $set: updateData }, { returnDocument: 'after' }
         );
         if (!updated) throw new Error('Base resume not found');
         return updated;

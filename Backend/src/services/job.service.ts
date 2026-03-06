@@ -58,7 +58,7 @@ export class JobService {
 
     async updateJob(id: string, jobData: Partial<IJob>): Promise<IJob | null> {
         try {
-            return await Job.findByIdAndUpdate(id, jobData, { new: true });
+            return await Job.findByIdAndUpdate(id, jobData, { returnDocument: 'after' });
         } catch (error) {
             throw new Error(`Failed to update job: ${error}`);
         }
