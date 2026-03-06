@@ -25,8 +25,7 @@ export const JobsStore = signalStore(
     { providedIn: 'root' },
     withState(INITIAL_STATE),
     withComputed((state, service = inject(JobsService)) => {
-        // Now just returns what the service has (server-side filtered)
-        const filteredJobs = computed(() => {
+        const displayedJobs = computed(() => {
             const jobs = [...service.jobs()];
             const col = state.sortColumn();
             const dir = state.sortDirection();
@@ -41,26 +40,17 @@ export const JobsStore = signalStore(
             return jobs;
         });
 
-        // Still computed for UI counts, but based on all jobs if possible
-        // Note: For true server-side counts, the API would need to return metadata
+        const totalCount = computed(() => service.total());
+
         const statusCounts = computed(() => {
             const jobs = service.jobs();
             const counts: Record<string, number> = {
-                all: jobs.length
+                all: service.total()
             };
             Object.values(JobStatus).forEach(status => {
                 counts[status] = jobs.filter(j => j.status === status).length;
             });
             return counts;
-        });
-
-        const totalCount = computed(() => filteredJobs().length);
-
-        const pagedJobs = computed(() => {
-            const filtered = filteredJobs();
-            const start = state.currentPage() * state.pageSize();
-            const end = start + state.pageSize();
-            return filtered.slice(start, end);
         });
 
         const totalApplications = computed(() => {
@@ -93,10 +83,10 @@ export const JobsStore = signalStore(
         });
 
         return {
-            filteredJobs,
+            displayedJobs,
             statusCounts,
             totalCount,
-            pagedJobs,
+            pagedJobs: displayedJobs,
             totalApplications,
             activeInterviews,
             offersReceived,
@@ -126,22 +116,23 @@ export const JobsStore = signalStore(
         setPageSize(pageSize: number): void {
             patchState(store, { pageSize, currentPage: 0 });
         },
-        // Call it from withHooks to sync
         async refresh(): Promise<void> {
             await service.fetchJobs({
                 search: store.searchTerm(),
-                status: store.statusFilter()
+                status: store.statusFilter(),
+                page: store.currentPage() + 1,
+                pageSize: store.pageSize(),
             });
         }
     })),
     withHooks({
         onInit(store) {
             effect(() => {
-                // React to search and status changes
                 const search = store.searchTerm();
                 const status = store.statusFilter();
+                const page = store.currentPage();
+                const pageSize = store.pageSize();
 
-                // Trigger refresh from service
                 store.refresh();
             });
         },

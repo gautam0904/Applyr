@@ -7,7 +7,7 @@ const jobService = new JobService();
 
 export const getJobs = async (req: Request, res: Response) => {
     try {
-        const { search, status } = req.query;
+        const { search, status, page: rawPage, pageSize: rawPageSize } = req.query;
         let query: any = {};
 
         if (search) {
@@ -24,8 +24,16 @@ export const getJobs = async (req: Request, res: Response) => {
             query.status = { $in: statusArray };
         }
 
-        const jobs = await Job.find(query).sort({ appliedDate: -1 });
-        res.json(jobs);
+        const page = Math.max(1, Number(rawPage) || 1);
+        const pageSize = Math.min(100, Math.max(1, Number(rawPageSize) || 10));
+        const skip = (page - 1) * pageSize;
+
+        const [jobs, total] = await Promise.all([
+            Job.find(query).sort({ appliedDate: -1 }).skip(skip).limit(pageSize),
+            Job.countDocuments(query),
+        ]);
+
+        res.json({ jobs, total, page, pageSize });
     } catch (error: any) {
         res.status(500).json({ message: error.message });
     }

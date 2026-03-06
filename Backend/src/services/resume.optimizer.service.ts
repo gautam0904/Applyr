@@ -184,12 +184,16 @@ Return JSON array only.`, 'Awards', true);
         const currentMonth = now.getMonth() + 1;
 
         let detailLevel: string;
+        let minBullets: number;
         if (requiredYears <= 3) {
-            detailLevel = 'This is a JUNIOR role. Include MORE project details, responsibilities, and technical depth. 6-8 bullets per role. Add extra project entries if needed to fill the page.';
+            detailLevel = 'This is a JUNIOR role. Include MORE project details, responsibilities, and technical depth to fill the page.';
+            minBullets = 6;
         } else if (requiredYears <= 6) {
-            detailLevel = 'This is a MID-LEVEL role. Balance between technical detail and achievements. 5-7 bullets per role.';
+            detailLevel = 'This is a MID-LEVEL role. Balance between technical detail and achievements.';
+            minBullets = 5;
         } else {
-            detailLevel = 'This is a SENIOR role (8+ years). Keep content concise but highlight impactful achievements, leadership contributions, and architecture decisions. 4-6 bullets per role. Show progression.';
+            detailLevel = 'This is a SENIOR role (8+ years). Highlight impactful achievements, leadership contributions, and architecture decisions. Show progression.';
+            minBullets = 4;
         }
 
         const prompt = `
@@ -218,14 +222,16 @@ CRITICAL RULES:
 6. Dates must be in YYYY-MM-DD format.
 7. Position titles should show progression (e.g. Software Engineer → Senior Software Engineer → Lead Engineer).
 8. ${detailLevel}
-9. Every bullet in highlights MUST:
+9. **EVERY work entry MUST have at least ${minBullets} bullet points in "highlights". NO EMPTY ENTRIES. This is NON-NEGOTIABLE.**
+10. The SENIOR/most-recent role should have ${minBullets + 2}-${minBullets + 3} bullets. Earlier roles should have ${minBullets}-${minBullets + 1} bullets.
+11. Every bullet in highlights MUST:
    - Start with a UNIQUE strong action verb
    - Contain at least one metric or number
    - Align with the JD technologies: ${techStack}
-10. Projects should align with JD tech stack. Keep ${Math.min(projects.length, requiredYears <= 3 ? 3 : 2)} projects maximum.
-11. Project highlights must be plain string arrays like ["Did X by Y%"], NOT objects.
-12. Use content from the original entries as inspiration — do NOT invent unrelated technologies.
-13. First page of resume must appear FULL and complete — no sparse sections.
+12. Projects should align with JD tech stack. Keep ${Math.min(projects.length, requiredYears <= 3 ? 3 : 2)} projects maximum.
+13. Project highlights must be plain string arrays like ["Did X by Y%"], NOT objects. Each project must have 3-5 highlights.
+14. Use content from the original entries as inspiration — do NOT invent unrelated technologies.
+15. The resume FIRST PAGE must appear FULL and complete — no sparse sections, no empty roles.
 
 JOB DESCRIPTION:
 ${jd.slice(0, 2000)}
@@ -262,6 +268,37 @@ Return ONLY valid JSON:
                 proj.highlights = proj.highlights.map((h: any) =>
                     typeof h === 'string' ? h : (h?.text ?? h?.description ?? String(h))
                 );
+            }
+
+            // Post-validation: fill any work entry that has fewer than minBullets
+            for (const entry of newWork) {
+                if (entry.highlights.length < minBullets) {
+                    console.warn(`[OptimizerService] Work entry "${entry.position}" has only ${entry.highlights.length} bullets — generating more`);
+                    try {
+                        const fillResult = await this.router.callJSON(ModelRole.ENRICHMENT, `
+Generate ${minBullets + 2} strong bullet points for this work experience entry.
+The role is "${entry.position}" at "Navin Infotech" from ${entry.startDate} to ${entry.endDate}.
+Tech stack from JD: ${techStack}
+
+Rules:
+- Each bullet MUST start with a unique strong action verb (Architected, Engineered, Spearheaded, etc.)
+- Each bullet MUST contain at least one metric or number
+- Align with the JD technologies
+- BANNED words: Developed, Implemented, Maintained, Helped, Assisted
+
+Existing bullets to keep: ${JSON.stringify(entry.highlights)}
+
+Return JSON: { "highlights": ["string", "string", ...] }`);
+                        if (fillResult?.highlights?.length) {
+                            entry.highlights = [
+                                ...entry.highlights,
+                                ...fillResult.highlights.map((h: any) =>
+                                    typeof h === 'string' ? h : String(h)
+                                ),
+                            ].slice(0, minBullets + 2);
+                        }
+                    } catch { }
+                }
             }
 
             return { work: newWork, projects: newProjects };
