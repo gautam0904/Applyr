@@ -25,7 +25,8 @@ export const updateJobInQueue = async (req: Request, res: Response) => {
         if (!queue) {
             return res.status(404).json({ message: 'Queue not found' });
         }
-        res.json(queue);
+        const pandingCount = await Queue.countDocuments({ status: 'pending' });
+        res.json({queue,pandingCount});
     } catch (error: any) {
         res.status(500).json({ message: error.message });
     }
