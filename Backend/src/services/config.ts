@@ -15,9 +15,6 @@ if (!process.env.OPENROUTER_API_KEY) {
     process.exit(1);
 }
 
-if (!process.env.GOOGLE_SERVICE_ACCOUNT_PATH) {
-    console.warn('⚠️  GOOGLE_SERVICE_ACCOUNT_PATH missing — Google Drive upload will fail');
-}
 
 console.log(`[Config] ${keys.length} Google API key(s) loaded`);
 

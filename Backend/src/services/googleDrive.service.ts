@@ -13,7 +13,7 @@ export class GoogleDriveService {
         if (!clientId || !clientSecret || !refreshToken) {
             console.error('[GoogleDrive] ✗ Missing OAuth2 credentials. Need:');
             console.error('[GoogleDrive]   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN');
-            console.error('[GoogleDrive]   Run: npx ts-node src/scripts/getDriveToken.ts  to generate them');
+            console.error('[GoogleDrive]   Run: npx tsx src/scripts/getDriveToken.ts  to generate them');
             return;
         }
 
@@ -27,15 +27,15 @@ export class GoogleDriveService {
         }
     }
 
-    async uploadFile(filePath: string, fileName: string, mimeType: string): Promise<string> {
+    async uploadFile(filePath: string, fileName: string, mimeType: string): Promise<string | null> {
         if (!this.drive) {
-            console.error(`[GoogleDrive] ✗ Not initialized — returning local:// for "${fileName}"`);
-            return `local://${fileName}`;
+            console.error(`[GoogleDrive] ✗ Not initialized — returning null for "${fileName}"`);
+            return null;
         }
 
         if (!fs.existsSync(filePath)) {
             console.error(`[GoogleDrive] ✗ File not found: "${filePath}"`);
-            return `local://${fileName}`;
+            return null;
         }
 
         const folderId = config.googleDriveFolderId;
@@ -69,8 +69,8 @@ export class GoogleDriveService {
 
             return url;
         } catch (err: any) {
-            console.error(`[GoogleDrive] ✗ Upload failed: ${err.message}`);
-            return `local://${fileName}`;
+            this.logError(err, `upload "${fileName}"`);
+            return null;
         }
     }
 
@@ -81,7 +81,7 @@ export class GoogleDriveService {
             console.log('[GoogleDrive] ✓ Connection OK');
             return true;
         } catch (err: any) {
-            console.error('[GoogleDrive] ✗ Ping failed:', err.message);
+            this.logError(err, 'ping');
             return false;
         }
     }
@@ -98,8 +98,26 @@ export class GoogleDriveService {
             console.log(`[GoogleDrive] ✓ Deleted file id=${fileId}`);
             return true;
         } catch (err: any) {
-            console.error(`[GoogleDrive] ✗ Delete failed for ${url}: ${err.message}`);
+            this.logError(err, `delete ${url}`);
             return false;
+        }
+    }
+
+    private logError(err: any, operation: string): void {
+        const msg: string = err.message ?? String(err);
+        const isTokenError =
+            msg.includes('invalid_grant') ||
+            msg.includes('Token has been expired') ||
+            msg.includes('invalid_client');
+
+        if (isTokenError) {
+            console.error(`[GoogleDrive] ✗ OAuth token expired or revoked during ${operation}.`);
+            console.error('[GoogleDrive]   ➜ Fix: run  npx tsx src/scripts/getDriveToken.ts  to get a new GOOGLE_REFRESH_TOKEN');
+            console.error('[GoogleDrive]   ➜ Update GOOGLE_REFRESH_TOKEN in .env, then restart the server.');
+            console.error('[GoogleDrive]   ➜ To stop tokens expiring every 7 days, publish your OAuth app:');
+            console.error('[GoogleDrive]       https://console.cloud.google.com/apis/credentials/consent');
+        } else {
+            console.error(`[GoogleDrive] ✗ Failed during ${operation}: ${msg}`);
         }
     }
 }

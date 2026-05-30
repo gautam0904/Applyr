@@ -188,9 +188,11 @@ export class ResumeService {
             'application/pdf',
         );
 
-        await this.jobService.updateJob(evaluation.jobId, { resumeUrl });
+        await this.jobService.updateJob(evaluation.jobId, { 
+            resumeUrl: resumeUrl || '',
+        });
 
-        return { resumeUrl, tailoredResume, evaluation };
+        return { resumeUrl: resumeUrl || '', tailoredResume, evaluation };
     }
 
     async buildCoverLetter(evaluationId: string): Promise<{
@@ -225,8 +227,10 @@ export class ResumeService {
             'application/pdf',
         );
 
-        await this.jobService.updateJob(evaluation.jobId, { coverLetterUrl });
+        await this.jobService.updateJob(evaluation.jobId, { 
+            coverLetterUrl: coverLetterUrl || '', 
+        });
 
-        return { coverLetterUrl, coverLetterData };
+        return { coverLetterUrl: coverLetterUrl || '', coverLetterData };
     }
 }
