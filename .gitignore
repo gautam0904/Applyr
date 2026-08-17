@@ -1,0 +1,7 @@
+# PM2 logs — auto-generated, never commit
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
