@@ -11,38 +11,151 @@ A full-stack **Job Application Tracker** that automates and organises your job h
 Every push to `main` automatically builds and uploads a ready-to-run zip to GitHub Releases.
 **Works on Linux, macOS, and Windows — no build tools needed on the target machine.**
 
-**Go to:** `https://github.com/gautam0904/Applyr/releases/latest` → Download `applyr-deploy.zip`
+---
 
-#### 🐧 Linux / 🍎 macOS
+#### Step 1 — Download the zip
+
+**Via browser:** Go to `https://github.com/gautam0904/Applyr/releases/latest` → click `applyr-deploy.zip`
+
+**Or via terminal (one line):**
+```bash
+# Mac / Linux
+curl -L https://github.com/gautam0904/Applyr/releases/latest/download/applyr-deploy.zip -o applyr-deploy.zip
+
+# Windows (PowerShell)
+curl -L https://github.com/gautam0904/Applyr/releases/latest/download/applyr-deploy.zip -o applyr-deploy.zip
+```
+
+---
+
+#### Step 2 — Run the setup script
+
+The setup script handles everything automatically on first run.
+
+**🐧 Mac / Linux**
 ```bash
 unzip applyr-deploy.zip
 cd applyr-deploy
-
-bash setup.sh              # installs PM2, sets all paths, downloads Chrome
-
-nano backend/.env          # fill in MONGODB_URI, API keys (see .env.example for list)
-
-pm2 start ecosystem.config.cjs
-pm2 save && pm2 startup    # auto-start on every reboot
+bash setup.sh
 ```
 
-#### 🪟 Windows (PowerShell)
+**🪟 Windows (PowerShell)**
 ```powershell
 Expand-Archive applyr-deploy.zip
 cd applyr-deploy
-
-.\setup.ps1               # installs PM2, sets all paths, downloads Chrome
-                           # (or right-click → "Run with PowerShell")
-
-notepad backend\.env       # fill in MONGODB_URI, API keys
-
-pm2 start ecosystem.config.cjs
-pm2 save
-pm2 startup                # copy & run the command it prints
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+# or: right-click setup.ps1 → "Run with PowerShell"
 ```
 
-> ✅ App is live at **http://localhost:4000** · API at **http://localhost:3000**
-> No Node.js build tools, no Angular CLI, no TypeScript compiler needed on the target machine.
+> What `setup.sh` / `setup.ps1` does automatically:
+> 1. Runs `npm ci --omit=dev` to install backend runtime packages
+> 2. Creates `backend/.env` from `backend/.env.example`
+> 3. Sets `PUPPETEER_CACHE_DIR` to the correct absolute path for this machine
+> 4. Downloads the Puppeteer Chrome binary (~170 MB, takes ~1 min on first run)
+> 5. Installs PM2 globally if not already installed
+
+---
+
+#### Step 3 — Fill in your API keys
+
+Open `backend/.env` and fill in the real values:
+
+```bash
+nano backend/.env        # Mac / Linux
+notepad backend\.env     # Windows
+```
+
+Required fields:
+
+```env
+# MongoDB Atlas — get from: https://cloud.mongodb.com → Connect → Drivers
+MONGODB_URI=mongodb+srv://<user>:<password>@cluster0.xxxx.mongodb.net
+DBNAME=Applyr
+
+# Groq AI — https://console.groq.com/keys
+GROQ_API_KEY=gsk_...
+
+# Google Gemini — https://aistudio.google.com/apikey (comma-separated for key rotation)
+GOOGLE_API_KEYS="AIzaSy..., AIzaSy..."
+
+# OpenRouter — https://openrouter.ai/keys
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# Google OAuth (for Drive resume storage)
+GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-...
+GOOGLE_REFRESH_TOKEN=1//...
+GOOGLE_DRIVE_FOLDER_ID=1jFt...
+
+# APY Hub (web scraping) — https://apyhub.com
+APY_HUB_API_KEY=APY0...
+
+# These are set automatically by setup script — do not change
+PORT=3000
+PUPPETEER_CACHE_DIR=<set by setup script>
+```
+
+> Leave `USE_LOCAL_DB` unset (or `false`) — the app uses MongoDB Atlas by default.
+> Only set `USE_LOCAL_DB=true` if you have MongoDB installed locally.
+
+---
+
+#### Step 4 — Start the app
+
+```bash
+pm2 start ecosystem.config.cjs
+```
+
+You should see both services `online`:
+
+```
+┌─────┬──────────────────┬────────┬──────────┐
+│ id  │ name             │ status │ uptime   │
+├─────┼──────────────────┼────────┼──────────┤
+│ 0   │ applyr-backend   │ online │ 5s       │
+│ 1   │ applyr-frontend  │ online │ 5s       │
+| 3.  | n8n              | online | 5s       │
+└─────┴──────────────────┴────────┴──────────┘
+```
+
+**Frontend → http://localhost:4000**
+**API → http://localhost:3000**
+
+---
+
+#### Step 5 — Auto-start on every reboot (optional but recommended)
+
+```bash
+pm2 save        # save current process list
+pm2 startup     # prints a command — copy and run it once
+```
+
+After this, both services start automatically whenever the machine boots.
+
+---
+
+#### Daily commands (all you need)
+
+```bash
+pm2 list                      # check status of all services
+pm2 restart all               # restart everything
+pm2 stop all                  # stop everything
+pm2 restart applyr-backend    # restart backend only
+pm2 restart applyr-frontend   # restart frontend only
+pm2 logs                      # live logs (all services)
+pm2 logs applyr-backend       # backend logs only
+pm2 logs applyr-frontend      # frontend logs only
+```
+
+---
+
+#### Ports reference
+
+| Service | Port | URL |
+|---|---|---|
+| Frontend (Angular SSR) | 4000 | http://localhost:4000 |
+| Backend (Express API) | 3000 | http://localhost:3000 |
+| n8n (optional) | 5678 | http://localhost:5678 |
 
 ---
 

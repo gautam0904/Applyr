@@ -15,7 +15,7 @@
  */
 
 const path = require("path");
-const fs   = require("fs");
+const fs = require("fs");
 
 // ── Resolve backend & frontend dirs (works in both source repo and deploy package) ──
 const ROOT = __dirname;
@@ -29,9 +29,9 @@ function resolveDir(...names) {
   return path.resolve(ROOT, names[0]);
 }
 
-const BACKEND  = resolveDir("Backend",  "backend");   // source repo uses "Backend", deploy uses "backend"
+const BACKEND = resolveDir("Backend", "backend");   // source repo uses "Backend", deploy uses "backend"
 const FRONTEND = resolveDir("Frontend", "frontend");  // source repo uses "Frontend", deploy uses "frontend"
-const LOGS     = path.resolve(ROOT, "logs");
+const LOGS = path.resolve(ROOT, "logs");
 
 // Ensure logs directory exists
 if (!fs.existsSync(LOGS)) fs.mkdirSync(LOGS, { recursive: true });
@@ -59,7 +59,7 @@ module.exports = {
       restart_delay: 3000,
       max_restarts: 10,
 
-      out_file:   path.resolve(LOGS, "backend-out.log"),
+      out_file: path.resolve(LOGS, "backend-out.log"),
       error_file: path.resolve(LOGS, "backend-error.log"),
       log_date_format: "YYYY-MM-DD HH:mm:ss",
     },
@@ -80,8 +80,35 @@ module.exports = {
       restart_delay: 3000,
       max_restarts: 10,
 
-      out_file:   path.resolve(LOGS, "frontend-out.log"),
+      out_file: path.resolve(LOGS, "frontend-out.log"),
       error_file: path.resolve(LOGS, "frontend-error.log"),
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+    },
+
+    {
+      // ─── n8n: Workflow Automation ──────────────────────────────────────
+      name: "n8n",
+      script: "n8n",
+      interpreter: "none",        // n8n is a CLI binary, not a Node script
+      args: "start",
+
+      env: {
+        NODE_ENV: "production",
+        N8N_PORT: 5678,
+        N8N_PROTOCOL: "http",
+        N8N_HOST: "localhost",
+        // Data is stored in the default ~/.n8n directory
+        // Override with N8N_USER_FOLDER if you want a custom location:
+        // N8N_USER_FOLDER: path.resolve(ROOT, ".n8n"),
+      },
+
+      watch: false,
+      autorestart: true,
+      restart_delay: 5000,
+      max_restarts: 10,
+
+      out_file: path.resolve(LOGS, "n8n-out.log"),
+      error_file: path.resolve(LOGS, "n8n-error.log"),
       log_date_format: "YYYY-MM-DD HH:mm:ss",
     },
   ],
