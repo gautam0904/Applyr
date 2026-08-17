@@ -14,6 +14,7 @@ Write-Host ""
 
 # 1. Install backend runtime dependencies (no devDeps)
 Write-Host "⬇️  Installing backend dependencies..." -ForegroundColor Yellow
+$env:PUPPETEER_SKIP_DOWNLOAD = "true"
 npm ci --omit=dev --prefix "$DIR\backend"
 Write-Host "✅ Backend dependencies installed" -ForegroundColor Green
 
