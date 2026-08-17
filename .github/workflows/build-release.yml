@@ -3,7 +3,7 @@ name: Build & Release Deploy Package
 on:
   push:
     branches: [main]
-  workflow_dispatch:       # allows you to trigger manually from GitHub UI
+  workflow_dispatch:       # trigger manually from GitHub UI → Actions tab
 
 jobs:
   build-and-release:
@@ -33,10 +33,6 @@ jobs:
         run: npm run build
         working-directory: Backend
 
-      - name: Prune Backend devDependencies
-        run: npm prune --omit=dev
-        working-directory: Backend
-
       # ── 4. Build Frontend ─────────────────────────────────────────────
       - name: Install Frontend dependencies
         run: npm ci
@@ -47,164 +43,196 @@ jobs:
         working-directory: Frontend
 
       # ── 5. Package deploy artifacts ───────────────────────────────────
+      #
+      #  ⚡ KEY CHANGE: node_modules is NOT included in the zip.
+      #     Instead we ship package.json + package-lock.json and let
+      #     setup.sh / setup.ps1 run "npm ci --omit=dev" on the target.
+      #
+      #  Result: zip goes from ~400 MB → ~15 MB.
+      #
       - name: Create deploy package
         run: |
           mkdir -p applyr-deploy/backend
           mkdir -p applyr-deploy/frontend
           mkdir -p applyr-deploy/logs
 
-          # Backend: compiled JS + runtime node_modules only (no .env — secrets stay local)
-          cp -r Backend/dist          applyr-deploy/backend/dist
-          cp -r Backend/node_modules  applyr-deploy/backend/node_modules
-          cp    Backend/package.json  applyr-deploy/backend/package.json
-          cp    Backend/.env.example  applyr-deploy/backend/.env.example
+          # ── Backend ──────────────────────────────────────────────────
+          # Compiled JS only — node_modules installed on target by setup script
+          cp -r Backend/dist           applyr-deploy/backend/dist
+          cp    Backend/package.json   applyr-deploy/backend/package.json
+          cp    Backend/package-lock.json applyr-deploy/backend/package-lock.json
+          cp    Backend/.env.example   applyr-deploy/backend/.env.example
 
-          # Frontend: SSR build output only (no node_modules needed)
-          cp -r Frontend/dist/Applyr  applyr-deploy/frontend/dist
+          # ── Frontend ──────────────────────────────────────────────────
+          # Angular SSR build is fully self-contained — no node_modules needed
+          cp -r Frontend/dist/Applyr   applyr-deploy/frontend/dist
 
-          # PM2 config + docs (ecosystem uses __dirname — no path patching needed)
-          cp ecosystem.config.cjs     applyr-deploy/
-          cp README.md                applyr-deploy/
+          # ── PM2 config + docs ─────────────────────────────────────────
+          cp ecosystem.config.cjs      applyr-deploy/
+          cp README.md                 applyr-deploy/
 
-          # ── setup.sh (Mac / Linux) ─────────────────────────────────────
+          # ── setup.sh (Mac / Linux) ────────────────────────────────────
           cat > applyr-deploy/setup.sh << 'SETUP_SH'
-          #!/bin/bash
-          # Applyr Setup — Mac / Linux
-          # Run once after downloading the release zip.
-          # Usage: bash setup.sh
+#!/bin/bash
+# Applyr Setup — Mac / Linux
+# Run once after downloading and unzipping the release.
+# Usage: bash setup.sh
 
-          set -e
-          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+set -e
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-          echo ""
-          echo "╔══════════════════════════════════════╗"
-          echo "║   Applyr — Setup (Mac / Linux)       ║"
-          echo "╚══════════════════════════════════════╝"
-          echo ""
+echo ""
+echo "╔══════════════════════════════════════╗"
+echo "║   Applyr — Setup (Mac / Linux)       ║"
+echo "╚══════════════════════════════════════╝"
+echo ""
 
-          # 1. Create .env from example
-          if [ ! -f "$DIR/backend/.env" ]; then
-            cp "$DIR/backend/.env.example" "$DIR/backend/.env"
-            echo "✅ Created backend/.env"
-            echo "⚠️  Open backend/.env and fill in your API keys before starting!"
-          else
-            echo "✅ backend/.env already exists — skipping"
-          fi
+# 1. Install backend runtime dependencies (no devDeps, no source code needed)
+echo "⬇️  Installing backend dependencies..."
+npm ci --omit=dev --prefix "$DIR/backend"
+echo "✅ Backend dependencies installed"
 
-          # 2. Fix PUPPETEER_CACHE_DIR in .env to this machine's absolute path
-          CACHE="$DIR/backend/.cache/puppeteer"
-          mkdir -p "$CACHE"
-          sed -i.bak "s|PUPPETEER_CACHE_DIR=.*|PUPPETEER_CACHE_DIR=$CACHE|" "$DIR/backend/.env"
-          rm -f "$DIR/backend/.env.bak"
-          echo "✅ PUPPETEER_CACHE_DIR → $CACHE"
+# 2. Create .env from example
+if [ ! -f "$DIR/backend/.env" ]; then
+  cp "$DIR/backend/.env.example" "$DIR/backend/.env"
+  echo "✅ Created backend/.env"
+  echo "⚠️  Edit backend/.env and fill in your API keys before starting!"
+else
+  echo "✅ backend/.env already exists — skipping"
+fi
 
-          # 3. Download Puppeteer Chrome if missing
-          if [ -z "$(ls -A "$CACHE" 2>/dev/null)" ]; then
-            echo "⬇️  Downloading Puppeteer Chrome (this takes ~1 min)..."
-            PUPPETEER_CACHE_DIR="$CACHE" npx --prefix "$DIR/backend" puppeteer browsers install chrome
-            echo "✅ Puppeteer Chrome downloaded"
-          else
-            echo "✅ Puppeteer Chrome already cached"
-          fi
+# 3. Fix PUPPETEER_CACHE_DIR to this machine's absolute path
+CACHE="$DIR/backend/.cache/puppeteer"
+mkdir -p "$CACHE"
+sed -i.bak "s|PUPPETEER_CACHE_DIR=.*|PUPPETEER_CACHE_DIR=$CACHE|" "$DIR/backend/.env"
+rm -f "$DIR/backend/.env.bak"
+echo "✅ PUPPETEER_CACHE_DIR → $CACHE"
 
-          # 4. Install PM2 if missing
-          if ! command -v pm2 &>/dev/null; then
-            echo "⬇️  Installing PM2..."
-            npm install -g pm2
-            echo "✅ PM2 installed"
-          else
-            echo "✅ PM2 already installed — $(pm2 --version)"
-          fi
+# 4. Download Puppeteer Chrome if not already cached
+if [ -z "$(ls -A "$CACHE" 2>/dev/null)" ]; then
+  echo "⬇️  Downloading Puppeteer Chrome (this takes ~1 min)..."
+  PUPPETEER_CACHE_DIR="$CACHE" node "$DIR/backend/node_modules/.bin/puppeteer" browsers install chrome \
+    || PUPPETEER_CACHE_DIR="$CACHE" npx --prefix "$DIR/backend" puppeteer browsers install chrome
+  echo "✅ Puppeteer Chrome downloaded"
+else
+  echo "✅ Puppeteer Chrome already cached"
+fi
 
-          echo ""
-          echo "══════════════════════════════════════════"
-          echo "  Setup complete!"
-          echo ""
-          echo "  Next:"
-          echo "  1. Edit backend/.env — fill in MONGODB_URI, API keys etc."
-          echo "  2. pm2 start ecosystem.config.cjs"
-          echo "  3. pm2 save && pm2 startup   ← auto-start on reboot"
-          echo ""
-          echo "  App → http://localhost:4000"
-          echo "  API → http://localhost:3000"
-          echo "══════════════════════════════════════════"
-          SETUP_SH
+# 5. Install PM2 globally if missing
+if ! command -v pm2 &>/dev/null; then
+  echo "⬇️  Installing PM2..."
+  npm install -g pm2
+  echo "✅ PM2 installed"
+else
+  echo "✅ PM2 already installed — $(pm2 --version)"
+fi
+
+echo ""
+echo "══════════════════════════════════════════"
+echo "  Setup complete!"
+echo ""
+echo "  Next steps:"
+echo "  1. Edit backend/.env — fill in MONGODB_URI, API keys etc."
+echo "     (use: nano \"$DIR/backend/.env\")"
+echo ""
+echo "  2. Start the app:"
+echo "     cd \"$DIR\" && pm2 start ecosystem.config.cjs"
+echo ""
+echo "  3. Auto-start on reboot:"
+echo "     pm2 save && pm2 startup"
+echo "     (copy & run the command pm2 startup prints)"
+echo ""
+echo "  App → http://localhost:4000"
+echo "  API → http://localhost:3000"
+echo "══════════════════════════════════════════"
+SETUP_SH
           chmod +x applyr-deploy/setup.sh
 
           # ── setup.ps1 (Windows — PowerShell) ──────────────────────────
           cat > applyr-deploy/setup.ps1 << 'SETUP_PS1'
-          # Applyr Setup — Windows (PowerShell)
-          # Run once after downloading the release zip.
-          # Usage: Right-click → "Run with PowerShell"
-          #   or in PowerShell terminal: .\setup.ps1
+# Applyr Setup — Windows (PowerShell)
+# Run once after downloading and unzipping the release.
+# Usage: Right-click → "Run with PowerShell"
+#   or in terminal: .\setup.ps1
 
-          $ErrorActionPreference = "Stop"
-          $DIR = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$ErrorActionPreference = "Stop"
+$DIR = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
-          Write-Host ""
-          Write-Host "╔══════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║   Applyr — Setup (Windows)           ║" -ForegroundColor Cyan
-          Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
-          Write-Host ""
+Write-Host ""
+Write-Host "╔══════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║   Applyr — Setup (Windows)           ║" -ForegroundColor Cyan
+Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host ""
 
-          # 1. Create .env from example
-          $envFile = "$DIR\backend\.env"
-          $envExample = "$DIR\backend\.env.example"
-          if (-Not (Test-Path $envFile)) {
-            Copy-Item $envExample $envFile
-            Write-Host "✅ Created backend\.env" -ForegroundColor Green
-            Write-Host "⚠️  Open backend\.env and fill in your API keys before starting!" -ForegroundColor Yellow
-          } else {
-            Write-Host "✅ backend\.env already exists — skipping" -ForegroundColor Green
-          }
+# 1. Install backend runtime dependencies
+Write-Host "⬇️  Installing backend dependencies..." -ForegroundColor Yellow
+npm ci --omit=dev --prefix "$DIR\backend"
+Write-Host "✅ Backend dependencies installed" -ForegroundColor Green
 
-          # 2. Fix PUPPETEER_CACHE_DIR in .env
-          $cache = "$DIR\backend\.cache\puppeteer"
-          New-Item -ItemType Directory -Force -Path $cache | Out-Null
-          $envContent = Get-Content $envFile
-          $envContent = $envContent -replace "PUPPETEER_CACHE_DIR=.*", "PUPPETEER_CACHE_DIR=$cache"
-          Set-Content $envFile $envContent
-          Write-Host "✅ PUPPETEER_CACHE_DIR → $cache" -ForegroundColor Green
+# 2. Create .env from example
+$envFile    = "$DIR\backend\.env"
+$envExample = "$DIR\backend\.env.example"
+if (-Not (Test-Path $envFile)) {
+  Copy-Item $envExample $envFile
+  Write-Host "✅ Created backend\.env" -ForegroundColor Green
+  Write-Host "⚠️  Edit backend\.env and fill in your API keys before starting!" -ForegroundColor Yellow
+} else {
+  Write-Host "✅ backend\.env already exists — skipping" -ForegroundColor Green
+}
 
-          # 3. Download Puppeteer Chrome if missing
-          $chromeExists = Get-ChildItem $cache -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-Not $chromeExists) {
-            Write-Host "⬇️  Downloading Puppeteer Chrome (this takes ~1 min)..." -ForegroundColor Yellow
-            $env:PUPPETEER_CACHE_DIR = $cache
-            & npx --prefix "$DIR\backend" puppeteer browsers install chrome
-            Write-Host "✅ Puppeteer Chrome downloaded" -ForegroundColor Green
-          } else {
-            Write-Host "✅ Puppeteer Chrome already cached" -ForegroundColor Green
-          }
+# 3. Fix PUPPETEER_CACHE_DIR to this machine's absolute path
+$cache = "$DIR\backend\.cache\puppeteer"
+New-Item -ItemType Directory -Force -Path $cache | Out-Null
+$envContent = Get-Content $envFile
+$envContent = $envContent -replace "PUPPETEER_CACHE_DIR=.*", "PUPPETEER_CACHE_DIR=$cache"
+Set-Content $envFile $envContent
+Write-Host "✅ PUPPETEER_CACHE_DIR → $cache" -ForegroundColor Green
 
-          # 4. Install PM2 if missing
-          $pm2Exists = Get-Command pm2 -ErrorAction SilentlyContinue
-          if (-Not $pm2Exists) {
-            Write-Host "⬇️  Installing PM2..." -ForegroundColor Yellow
-            npm install -g pm2
-            Write-Host "✅ PM2 installed" -ForegroundColor Green
-          } else {
-            Write-Host "✅ PM2 already installed" -ForegroundColor Green
-          }
+# 4. Download Puppeteer Chrome if missing
+$chromeExists = Get-ChildItem $cache -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-Not $chromeExists) {
+  Write-Host "⬇️  Downloading Puppeteer Chrome (this takes ~1 min)..." -ForegroundColor Yellow
+  $env:PUPPETEER_CACHE_DIR = $cache
+  & npx --prefix "$DIR\backend" puppeteer browsers install chrome
+  Write-Host "✅ Puppeteer Chrome downloaded" -ForegroundColor Green
+} else {
+  Write-Host "✅ Puppeteer Chrome already cached" -ForegroundColor Green
+}
 
-          Write-Host ""
-          Write-Host "══════════════════════════════════════════" -ForegroundColor Cyan
-          Write-Host "  Setup complete!" -ForegroundColor Green
-          Write-Host ""
-          Write-Host "  Next steps:"
-          Write-Host "  1. Edit backend\.env — fill in MONGODB_URI, API keys etc."
-          Write-Host "  2. pm2 start ecosystem.config.cjs"
-          Write-Host "  3. pm2 save"
-          Write-Host "  4. pm2 startup   then run the command it prints"
-          Write-Host ""
-          Write-Host "  App → http://localhost:4000"
-          Write-Host "  API → http://localhost:3000"
-          Write-Host "══════════════════════════════════════════" -ForegroundColor Cyan
-          SETUP_PS1
+# 5. Install PM2 globally if missing
+$pm2Exists = Get-Command pm2 -ErrorAction SilentlyContinue
+if (-Not $pm2Exists) {
+  Write-Host "⬇️  Installing PM2..." -ForegroundColor Yellow
+  npm install -g pm2
+  Write-Host "✅ PM2 installed" -ForegroundColor Green
+} else {
+  Write-Host "✅ PM2 already installed" -ForegroundColor Green
+}
 
-          # Zip it up
+Write-Host ""
+Write-Host "══════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "  Setup complete!" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Next steps:"
+Write-Host "  1. Edit backend\.env — fill in MONGODB_URI, API keys etc."
+Write-Host "     notepad `"$DIR\backend\.env`""
+Write-Host ""
+Write-Host "  2. Start the app:"
+Write-Host "     cd `"$DIR`"; pm2 start ecosystem.config.cjs"
+Write-Host ""
+Write-Host "  3. Auto-start on reboot:"
+Write-Host "     pm2 save"
+Write-Host "     pm2 startup   (run the command it prints)"
+Write-Host ""
+Write-Host "  App → http://localhost:4000"
+Write-Host "  API → http://localhost:3000"
+Write-Host "══════════════════════════════════════════" -ForegroundColor Cyan
+SETUP_PS1
+
+          # ── Zip (small now — no node_modules) ────────────────────────
           zip -r applyr-deploy.zip applyr-deploy/
-          echo "✅ Package created: applyr-deploy.zip ($(du -sh applyr-deploy.zip | cut -f1))"
+          SIZE=$(du -sh applyr-deploy.zip | cut -f1)
+          echo "✅ Package created: applyr-deploy.zip ($SIZE)"
 
       # ── 6. Get version info ───────────────────────────────────────────
       - name: Get version info
@@ -213,34 +241,35 @@ jobs:
           echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      # ── 7. Create / update GitHub Release ─────────────────────────────
+      # ── 7. Create GitHub Release ──────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: deploy-${{ steps.version.outputs.date }}-${{ steps.version.outputs.sha }}
           name: "Deploy Package — ${{ steps.version.outputs.date }}"
           body: |
-            ## Applyr Deploy Package
+            ## Applyr Deploy Package (~15 MB)
 
-            Download `applyr-deploy.zip` — **no source code, no build tools needed on the target machine**.
+            Download `applyr-deploy.zip` — **no source code needed on the target machine**.
+            `setup.sh` / `setup.ps1` handles everything automatically (installs deps, PM2, Chrome).
 
             ---
 
-            ### 🐧 Linux / 🍎 Mac
+            ### 🐧 Linux / 🍎 macOS
             ```bash
             unzip applyr-deploy.zip
             cd applyr-deploy
             bash setup.sh
             nano backend/.env        # fill in MONGODB_URI, API keys
             pm2 start ecosystem.config.cjs
-            pm2 save && pm2 startup  # auto-start on boot
+            pm2 save && pm2 startup
             ```
 
             ### 🪟 Windows (PowerShell)
             ```powershell
             Expand-Archive applyr-deploy.zip
             cd applyr-deploy
-            .\setup.ps1              # right-click → Run with PowerShell also works
+            .\setup.ps1
             notepad backend\.env     # fill in MONGODB_URI, API keys
             pm2 start ecosystem.config.cjs
             pm2 save
@@ -249,18 +278,18 @@ jobs:
 
             ---
 
-            ### What's included
-            | File/Folder | Description |
+            ### What's inside the zip
+            | Path | Description |
             |---|---|
             | `backend/dist/` | Compiled Express server |
-            | `backend/node_modules/` | Runtime packages only (no devDeps) |
+            | `backend/package.json` + `package-lock.json` | Deps installed by setup script |
             | `backend/.env.example` | API key template |
-            | `frontend/dist/` | Angular SSR build |
+            | `frontend/dist/` | Angular SSR build (self-contained) |
             | `ecosystem.config.cjs` | PM2 config (cross-platform, no path editing needed) |
             | `setup.sh` | One-command setup for Mac/Linux |
             | `setup.ps1` | One-command setup for Windows |
 
-            > ⚠️ `.env` is **not included** (contains secrets). `setup.sh` / `setup.ps1` creates it from `.env.example` automatically.
+            > ⚠️ `.env` is **not included**. The setup script creates it from `.env.example` automatically.
 
             **Commit:** `${{ steps.version.outputs.sha }}`
           files: applyr-deploy.zip
