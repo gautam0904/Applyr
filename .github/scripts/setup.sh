@@ -14,7 +14,7 @@ echo ""
 
 # 1. Install backend runtime dependencies (no devDeps)
 echo "⬇️  Installing backend dependencies..."
-npm ci --omit=dev --prefix "$DIR/backend"
+PUPPETEER_SKIP_DOWNLOAD=true npm ci --omit=dev --prefix "$DIR/backend"
 echo "✅ Backend dependencies installed"
 
 # 2. Create .env from example
