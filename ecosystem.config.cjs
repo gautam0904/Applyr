@@ -67,7 +67,7 @@ module.exports = {
     {
       // ─── Frontend: Angular SSR server ─────────────────────────────────
       name: "applyr-frontend",
-      script: path.resolve(FRONTEND, "dist", "Applyr", "server", "server.mjs"),
+      script: frontendScript,
       cwd: FRONTEND,
 
       env: {
